@@ -1,102 +1,108 @@
 import json
-import sys
-from typing import Any, Dict
+from typing import Any
 from urllib import request, parse
 
 
 class LibreTranslateAPI:
     """Connect to the LibreTranslate API"""
 
-    """Example usage:
-    from libretranslatepy import LibreTranslateAPI
-
-    lt = LibreTranslateAPI("https://translate.terraprint.co/")
-
-    print(lt.translate("LibreTranslate is awesome!", "en", "es"))
-    # LibreTranslate es impresionante!
-
-    print(lt.detect("Hello World"))
-    # [{"confidence": 0.6, "language": "en"}]
-    
-    print(lt.languages())
-    # [{"code":"en", "name":"English"}]
-    """
-
     DEFAULT_URL = "https://translate.terraprint.co/"
 
     def __init__(self, url: str | None = None, api_key: str | None = None):
-        """Create a LibreTranslate API connection.
-
-        Args:
-            url (str): The url of the LibreTranslate endpoint.
-            api_key (str): The API key.
-        """
         self.url = LibreTranslateAPI.DEFAULT_URL if url is None else url
         self.api_key = api_key
-
-        # Add trailing slash
         assert len(self.url) > 0
         if self.url[-1] != "/":
             self.url += "/"
 
-    def translate(self, q: str, source: str = "en", target: str = "es", format="text", timeout: int | None = None) -> Any:
-        """Translate string
 
-        Args:
-            q (str): The text to translate
-            source (str): The source language code (ISO 639)
-            target (str): The target language code (ISO 639)
-            format (str): The format of the text (plain or html)
-            timeout (int): Request timeout in seconds
-
-        Returns:
-            str: The translated text
-        """
-        url = self.url + "translate"
-        params: Dict[str, str] = {"q": q, "source": source, "target": target, "format": format}
+    def detect(self, q, timeout: int | None = None):
+        """Detect Language of Text"""
+        url = self.url + "detect"
+        params = {"q": q}
         if self.api_key is not None:
             params["api_key"] = self.api_key
         url_params = parse.urlencode(params)
         req = request.Request(url, data=url_params.encode())
-        response = request.urlopen(req, timeout = timeout)
+        response = request.urlopen(req, timeout=timeout)
+        response_str = response.read().decode()
+        return json.loads(response_str)
+
+    def frontend_settings(self, timeout: int | None = None):
+        """Retrieve Frontend Settings"""
+        url = self.url + "frontend/settings"
+        params = {}
+        url_params = parse.urlencode(params)
+        req = request.Request(url, data=url_params.encode(), method="GET")
+        response = request.urlopen(req, timeout=timeout)
+        response_str = response.read().decode()
+        return json.loads(response_str)
+
+    def health(self, timeout: int | None = None):
+        """Health Check"""
+        url = self.url + "health"
+        params = {}
+        url_params = parse.urlencode(params)
+        req = request.Request(url, data=url_params.encode(), method="GET")
+        response = request.urlopen(req, timeout=timeout)
+        response_str = response.read().decode()
+        return json.loads(response_str)
+
+    def languages(self, timeout: int | None = None):
+        """Get Supported Languages"""
+        url = self.url + "languages"
+        params = {}
+        url_params = parse.urlencode(params)
+        req = request.Request(url, data=url_params.encode(), method="GET")
+        response = request.urlopen(req, timeout=timeout)
+        response_str = response.read().decode()
+        return json.loads(response_str)
+
+    def suggest(self, q, s, source, target, timeout: int | None = None):
+        """Submit a Suggestion to Improve a Translation"""
+        url = self.url + "suggest"
+        params = {"q": q, "s": s, "source": source, "target": target}
+        url_params = parse.urlencode(params)
+        req = request.Request(url, data=url_params.encode())
+        response = request.urlopen(req, timeout=timeout)
+        response_str = response.read().decode()
+        return json.loads(response_str)
+
+    def translate(self, q, source, target, format="text", alternatives=0, timeout: int | None = None):
+        """Translate Text"""
+        url = self.url + "translate"
+        params = {"q": q, "source": source, "target": target, "format": format, "alternatives": alternatives}
+        if self.api_key is not None:
+            params["api_key"] = self.api_key
+        url_params = parse.urlencode(params)
+        req = request.Request(url, data=url_params.encode())
+        response = request.urlopen(req, timeout=timeout)
         response_str = response.read().decode()
         return json.loads(response_str)["translatedText"]
 
-    def detect(self, q: str, timeout: int | None = None) -> Any:
-        """Detect the language of a single text.
-
-        Args:
-            q (str): Text to detect
-            timeout (int): Request timeout in seconds
-
-        Returns:
-            The detected languages ex: [{"confidence": 0.6, "language": "en"}]
-        """
-        url = self.url + "detect"
-        params: Dict[str, str] = {"q": q}
+    def translate_file(self, file, source, target, timeout: int | None = None):
+        """Translate a File"""
+        url = self.url + "translate_file"
+        params = {"source": source, "target": target}
         if self.api_key is not None:
             params["api_key"] = self.api_key
-        url_params = parse.urlencode(params)
-        req = request.Request(url, data=url_params.encode())
-        response = request.urlopen(req, timeout = timeout)
-        response_str = response.read().decode()
-        return json.loads(response_str)
-
-    def languages(self, timeout: int | None = None) -> Any:
-        """Retrieve list of supported languages.
-
-        Args:
-            timeout (int): Request timeout in seconds
-
-        Returns:
-            A list of available languages ex: [{"code":"en", "name":"English"}]
-        """
-        url = self.url + "languages"
-        params: Dict[str, str] = dict()
-        if self.api_key is not None:
-            params["api_key"] = self.api_key
-        url_params = parse.urlencode(params)
-        req = request.Request(url, data=url_params.encode(), method="GET")
-        response = request.urlopen(req, timeout = timeout)
-        response_str = response.read().decode()
-        return json.loads(response_str)
+        import io
+        from urllib.request import Request, urlopen
+        boundary = "----LibreTranslateGen" + str(hash(file))
+        body = []
+        for k, v in params.items():
+            body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode())
+        if isinstance(file, bytes):
+            file_data = file
+        elif hasattr(file, 'read'):
+            file_data = file.read()
+        else:
+            file_data = file.encode()
+        body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"file\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode())
+        body.append(file_data if isinstance(file_data, bytes) else file_data.encode())
+        body.append(f"\r\n--{boundary}--\r\n".encode())
+        data = b"".join(body)
+        req = Request(url, data=data)
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        response = urlopen(req, timeout=timeout)
+        return json.loads(response.read().decode())
