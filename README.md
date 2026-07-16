@@ -45,13 +45,17 @@ print(lt.frontend_settings())
 
 ## Generate client from spec
 
-The client is generated from the [LibreTranslate OpenAPI spec](https://libretranslate.com/spec):
+The client is **auto-generated** from the [LibreTranslate OpenAPI spec](https://libretranslate.com/spec) using `openapi-python-client`:
 
 ```
-python generate.py
+pip install openapi-python-client
+python generate.py        # uses cached spec.json
+python generate.py --fetch  # download latest spec first
 ```
 
-This fetches the spec and regenerates `libretranslatepy/api.py` automatically.
+This regenerates the entire `libretranslatepy/` package with typed models (attrs), async support, and full endpoint coverage.
+
+The generated client also exposes `Client` and `AuthenticatedClient` for advanced usage (e.g. async, custom headers, timeout). See `libretranslatepy/client.py` for details.
 
 ## Tests
 

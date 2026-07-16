@@ -1,189 +1,140 @@
-import json
-import re
-import os
+import json, os, shutil, subprocess, sys, tempfile
 from urllib import request
 
-SPEC_URL = "https://libretranslate.com/spec"
-SPEC_CACHE = os.path.join(os.path.dirname(__file__), "spec.json")
+HERE = os.path.dirname(__file__)
+PACKAGE = os.path.join(HERE, "libretranslatepy")
+SPEC_PATH = os.path.join(HERE, "spec.json")
 
-HEADER = '''import json
-from typing import Any
-from urllib import request, parse
+
+def fix(schema):
+    """Replace oneOf with first primitive option."""
+    if "oneOf" in schema:
+        for opt in schema["oneOf"]:
+            if isinstance(opt, dict) and opt.get("type") not in (None, "array"):
+                return {"type": opt["type"]}
+        return {"type": "string"}
+    if "properties" in schema:
+        schema["properties"] = {k: fix(v) if isinstance(v, dict) else v for k, v in schema["properties"].items()}
+    return schema
+
+
+def convert(spec):
+    oai = {"openapi": "3.0.0", "info": spec["info"], "servers": [{"url": spec.get("basePath", "/")}], "paths": {}}
+    for path, methods in spec.get("paths", {}).items():
+        oai["paths"][path] = {}
+        for method, op in methods.items():
+            op3 = {k: v for k, v in op.items() if k not in ("parameters", "consumes")}
+            params = op.get("parameters", [])
+            form = [p for p in params if p.get("in") == "formData"]
+            others = [p for p in params if p.get("in") != "formData"]
+            if others:
+                op3["parameters"] = []
+                for p in others:
+                    p3 = dict(p)
+                    p3["schema"] = fix(dict(p3.pop("schema", {"type": p3.pop("type", "string")})))
+                    op3["parameters"].append(p3)
+            if form:
+                is_file = any(p.get("type") == "file" for p in form)
+                props, required = {}, []
+                for p in form:
+                    name = p["name"]
+                    if p.get("type") == "file":
+                        props[name] = {"type": "string", "format": "binary"}
+                    else:
+                        props[name] = fix(dict(p.get("schema", {"type": p.get("type", "string")})))
+                    if p.get("required"):
+                        required.append(name)
+                ctype = "multipart/form-data" if is_file else "application/x-www-form-urlencoded"
+                op3["requestBody"] = {
+                    "required": True,
+                    "content": {ctype: {"schema": {"type": "object", "properties": props, **({"required": required} if required else {})}}},
+                }
+            oai["paths"][path][method] = op3
+    if "definitions" in spec:
+        oai["components"] = {"schemas": {n: fix(dict(s)) for n, s in spec["definitions"].items()}}
+    return oai
+
+
+def main():
+    if "--fetch" in sys.argv:
+        resp = request.urlopen("https://libretranslate.com/spec", timeout=10)
+        raw = json.loads(resp.read().decode())
+        with open(SPEC_PATH, "w") as f:
+            json.dump(raw, f, indent=2)
+    with open(SPEC_PATH) as f:
+        raw = json.load(f)
+
+    tmp = tempfile.mkdtemp()
+    try:
+        spec_path = os.path.join(tmp, "openapi.json")
+        with open(spec_path, "w") as f:
+            json.dump(convert(raw), f)
+        out = os.path.join(tmp, "out")
+        ret = subprocess.run(
+            ["openapi-python-client", "generate", "--path", spec_path, "--output-path", out],
+            capture_output=True, text=True,
+        )
+        if ret.returncode != 0:
+            print(ret.stderr or ret.stdout)
+            raise SystemExit(1)
+        src_name = [d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d)) and not d.startswith(".")][0]
+        shutil.rmtree(PACKAGE, ignore_errors=True)
+        shutil.copytree(os.path.join(out, src_name), PACKAGE)
+        # Write backward-compatible wrapper
+        compat = '''import json
+
+from .client import AuthenticatedClient, Client as _Client
+from .api.translate.post_detect import sync_detailed as _detect
+from .api.translate.post_translate import sync_detailed as _translate
+from .api.translate.get_languages import sync_detailed as _languages
+from .api.translate.post_translate_file import sync_detailed as _translate_file
+from .api.misc.get_health import sync_detailed as _health
+from .api.misc.get_frontend_settings import sync_detailed as _frontend
+from .api.misc.post_suggest import sync_detailed as _suggest
+from .models import (
+    PostDetectBody, PostTranslateBody, PostSuggestBody, PostTranslateFileBody,
+)
+
+DEFAULT_URL = "https://translate.terraprint.co/"
 
 
 class LibreTranslateAPI:
     """Connect to the LibreTranslate API"""
 
-    DEFAULT_URL = "https://translate.terraprint.co/"
-
     def __init__(self, url: str | None = None, api_key: str | None = None):
-        self.url = LibreTranslateAPI.DEFAULT_URL if url is None else url
-        self.api_key = api_key
-        assert len(self.url) > 0
-        if self.url[-1] != "/":
-            self.url += "/"
+        self.url = (url or DEFAULT_URL).rstrip("/") + "/"
+        self._client = AuthenticatedClient(base_url=self.url, token=api_key) if api_key else _Client(base_url=self.url)
 
+    def translate(self, q: str, source: str = "en", target: str = "es", format: str = "text", alternatives: int = 0, timeout: int | None = None) -> str:
+        body = PostTranslateBody(q=q, source=source, target=target, format_=format, alternatives=alternatives)
+        return json.loads(_translate(client=self._client, body=body).content)["translatedText"]
+
+    def detect(self, q: str, timeout: int | None = None) -> list:
+        return json.loads(_detect(client=self._client, body=PostDetectBody(q=q)).content)
+
+    def languages(self, timeout: int | None = None) -> list:
+        return json.loads(_languages(client=self._client).content)
+
+    def health(self, timeout: int | None = None) -> dict:
+        return json.loads(_health(client=self._client).content)
+
+    def frontend_settings(self, timeout: int | None = None) -> dict:
+        return json.loads(_frontend(client=self._client).content)
+
+    def suggest(self, q: str, s: str, source: str, target: str, timeout: int | None = None) -> dict:
+        return json.loads(_suggest(client=self._client, body=PostSuggestBody(q=q, s=s, source=source, target=target)).content)
+
+    def translate_file(self, file: bytes | str, source: str, target: str, timeout: int | None = None) -> dict:
+        return json.loads(_translate_file(client=self._client, body=PostTranslateFileBody(file=file, source=source, target=target)).content)
 '''
-
-METHOD = '''
-    def {method_name}(self, {params}):
-        """{summary}"""
-        url = self.url + "{path}"
-        params = {{{param_dict}}}
-{api_key_block}\
-{body}
-'''
-
-
-def snake_case(name):
-    name = re.sub(r'[^a-zA-Z0-9 ]', '_', name)
-    name = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', name)
-    return name.lower().strip('_')
-
-
-def to_python_params(parameters):
-    func_params = []
-    dict_items = []
-    has_api_key = False
-    has_file = False
-    for p in parameters:
-        name = p.get("name")
-        if name == "api_key":
-            has_api_key = True
-            continue
-        is_file = p.get("type") == "file"
-        if is_file:
-            has_file = True
-        required = p.get("required", True)
-        schema = p.get("schema", {})
-        default = schema.get("default") if schema else p.get("default")
-        if not required and default is not None:
-            if isinstance(default, str):
-                func_params.append(f'{name}="{default}"')
-            else:
-                func_params.append(f"{name}={default}")
-        elif not required:
-            func_params.append(f'{name}=None')
-        else:
-            func_params.append(name)
-        if not is_file:
-            dict_items.append(f'"{name}": {name}')
-    return func_params, dict_items, has_api_key, has_file
-
-
-def gen_get():
-    return '''        url_params = parse.urlencode(params)
-        req = request.Request(url, data=url_params.encode(), method="GET")
-        response = request.urlopen(req, timeout=timeout)
-        response_str = response.read().decode()
-        return json.loads(response_str)'''
-
-
-def gen_post():
-    return '''        url_params = parse.urlencode(params)
-        req = request.Request(url, data=url_params.encode())
-        response = request.urlopen(req, timeout=timeout)
-        response_str = response.read().decode()
-        return json.loads(response_str)'''
-
-
-def gen_post_translate():
-    return '''        url_params = parse.urlencode(params)
-        req = request.Request(url, data=url_params.encode())
-        response = request.urlopen(req, timeout=timeout)
-        response_str = response.read().decode()
-        return json.loads(response_str)["translatedText"]'''
-
-
-def gen_file():
-    return '''        import io
-        from urllib.request import Request, urlopen
-        boundary = "----LibreTranslateGen" + str(hash(file))
-        body = []
-        for k, v in params.items():
-            body.append(f"--{boundary}\\r\\nContent-Disposition: form-data; name=\\"{k}\\"\\r\\n\\r\\n{v}\\r\\n".encode())
-        if isinstance(file, bytes):
-            file_data = file
-        elif hasattr(file, 'read'):
-            file_data = file.read()
-        else:
-            file_data = file.encode()
-        body.append(f"--{boundary}\\r\\nContent-Disposition: form-data; name=\\"file\\"; filename=\\"file\\"\\r\\nContent-Type: application/octet-stream\\r\\n\\r\\n".encode())
-        body.append(file_data if isinstance(file_data, bytes) else file_data.encode())
-        body.append(f"\\r\\n--{boundary}--\\r\\n".encode())
-        data = b"".join(body)
-        req = Request(url, data=data)
-        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-        response = urlopen(req, timeout=timeout)
-        return json.loads(response.read().decode())'''
-
-
-def generate():
-    print(f"Fetching spec from {SPEC_URL}...")
-    try:
-        resp = request.urlopen(SPEC_URL, timeout=10)
-        spec = json.loads(resp.read().decode())
-        with open(SPEC_CACHE, "w") as f:
-            json.dump(spec, f, indent=2)
-    except Exception as e:
-        print(f"Download failed ({e}), trying cache...")
-        if os.path.exists(SPEC_CACHE):
-            with open(SPEC_CACHE) as f:
-                spec = json.load(f)
-        else:
-            print("No cached spec found. Aborting.")
-            return
-
-    out = HEADER
-
-    for path, methods in spec.get("paths", {}).items():
-        path_clean = path.strip("/")
-        for http_method, operation in methods.items():
-            summary = operation.get("summary", "")
-            parameters = operation.get("parameters", [])
-            func_params, dict_items, has_api_key, has_file = to_python_params(parameters)
-
-            parts = path_clean.split("/")
-            method_name = "_".join(parts)
-            if not method_name:
-                method_name = snake_case(summary)
-            method_name = snake_case(method_name)
-
-            api_key_block = ""
-            if has_api_key:
-                api_key_block = "        if self.api_key is not None:\n            params[\"api_key\"] = self.api_key\n"
-
-            params_str = ", ".join(func_params)
-            if params_str:
-                params_str += ", "
-            params_str += "timeout: int | None = None"
-            param_dict_str = ", ".join(dict_items)
-
-            if http_method == "get":
-                body = gen_get()
-            elif has_file:
-                body = gen_file()
-            elif path_clean == "translate":
-                body = gen_post_translate()
-            else:
-                body = gen_post()
-
-            out += METHOD.format(
-                method_name=method_name,
-                summary=summary,
-                params=params_str,
-                path=path_clean,
-                param_dict=param_dict_str if param_dict_str else "",
-                api_key_block=api_key_block,
-                body=body,
-            )
-
-    return out
+        with open(os.path.join(PACKAGE, "compat.py"), "w") as f:
+            f.write(compat)
+        with open(os.path.join(PACKAGE, "__init__.py"), "a") as f:
+            f.write("\nfrom .compat import LibreTranslateAPI\n")
+        print("Generated libretranslatepy/")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    code = generate()
-    if code:
-        with open(os.path.join(os.path.dirname(__file__), "libretranslatepy", "api.py"), "w") as f:
-            f.write(code)
-        print("Generated libretranslatepy/api.py")
+    main()
