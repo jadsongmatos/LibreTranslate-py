@@ -2,70 +2,47 @@
 
 Python bindings to connect to a [LibreTranslate API](https://github.com/LibreTranslate/LibreTranslate)
 
-https://pypi.org/project/libretranslatepy/
+**100% generated from the [OpenAPI spec](https://libretranslate.com/spec).**  
+No hand-written client code. When the API changes, just regenerate.
 
 ## Install
-```
+
+```bash
 pip install libretranslatepy
 ```
 
-## Example usage
+## Usage
+
 ```python
-from libretranslatepy import LibreTranslateAPI
+import json
+from libretranslatepy import Client
+from libretranslatepy.models import PostDetectBody
+from libretranslatepy.api.translate import post_detect
 
-lt = LibreTranslateAPI("https://libretranslate.com/")
-
-print(lt.translate("LibreTranslate is awesome!", "en", "es"))
-# LibreTranslate es impresionante!
-
-print(lt.detect("Hello World"))
-# [{"confidence": 0.6, "language": "en"}]
-
-print(lt.languages())
-# [{"code":"en", "name":"English"}, {"code":"es", "name":"Spanish"}]
-
-print(lt.health())
-# {"status": "ok"}
-
-print(lt.frontend_settings())
-# {"keyRequired": false, "charLimit": 500, ...}
+client = Client(base_url="https://libretranslate.com/")
+resp = post_detect.sync_detailed(client=client, body=PostDetectBody(q="Hello world"))
+print(json.loads(resp.content))
 ```
 
-## Available methods
+Every endpoint provides both `sync_detailed()` and `asyncio_detailed()` functions.  
+See `libretranslatepy/api/` for the full list.
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `translate(q, source, target, format, alternatives)` | `POST /translate` | Translate text |
-| `detect(q)` | `POST /detect` | Detect language |
-| `languages()` | `GET /languages` | List supported languages |
-| `health()` | `GET /health` | Health check |
-| `frontend_settings()` | `GET /frontend/settings` | Server frontend settings |
-| `suggest(q, s, source, target)` | `POST /suggest` | Submit translation suggestion |
-| `translate_file(file, source, target)` | `POST /translate_file` | Translate a file |
+## Generate
 
-## Generate client from spec
-
-The client is **auto-generated** from the [LibreTranslate OpenAPI spec](https://libretranslate.com/spec) using `openapi-python-client`:
-
-```
+```bash
 pip install openapi-python-client
-python generate.py        # uses cached spec.json
-python generate.py --fetch  # download latest spec first
+python generate.py              # generate from cached spec
+python generate.py --fetch      # download latest spec first
 ```
 
-This regenerates the entire `libretranslatepy/` package with typed models (attrs), async support, and full endpoint coverage.
+Regenerates the entire `libretranslatepy/` package with typed models, sync/async clients, and full endpoint coverage.
 
-The generated client also exposes `Client` and `AuthenticatedClient` for advanced usage (e.g. async, custom headers, timeout). See `libretranslatepy/client.py` for details.
-
-## Tests
-
-```
+```bash
 python -m pytest test_libretranslate.py
 ```
 
-## [LibreTranslate Mirrors](https://github.com/LibreTranslate/LibreTranslate#mirrors)
-
 ## License
-Licensed under either the MIT License or Public Domain
+
+MIT or Public Domain
 
 Developed by P.J. Finlay

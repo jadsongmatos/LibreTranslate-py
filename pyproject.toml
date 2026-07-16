@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "libretranslatepy"
+dynamic = ["version"]
+description = "Python bindings for LibreTranslate API"
+keywords = ["translation", "libretranslate"]
+requires-python = ">=3.9"
+dependencies = ["httpx", "attrs"]
+
+[project.urls]
+Home = "https://github.com/argosopentech/LibreTranslate-py"
+
+[tool.setuptools.dynamic]
+version = {attr = "libretranslatepy.__version__"}

@@ -1,111 +1,118 @@
 import json
 import unittest
+from io import BytesIO
 from unittest.mock import patch, MagicMock
-from libretranslatepy import LibreTranslateAPI
+from libretranslatepy import Client
+from libretranslatepy.types import File
+from libretranslatepy.api.translate.post_detect import sync_detailed as detect
+from libretranslatepy.api.translate.post_translate import sync_detailed as translate
+from libretranslatepy.api.translate.get_languages import sync_detailed as languages
+from libretranslatepy.api.translate.post_translate_file import sync_detailed as translate_file
+from libretranslatepy.api.misc.get_health import sync_detailed as health
+from libretranslatepy.api.misc.get_frontend_settings import sync_detailed as frontend_settings
+from libretranslatepy.api.misc.post_suggest import sync_detailed as suggest
+from libretranslatepy.models import (
+    PostDetectBody,
+    PostTranslateBody,
+    PostTranslateBodyFormat,
+    PostSuggestBody,
+    PostTranslateFileBody,
+)
 
 
-class TestLibreTranslateAPI(unittest.TestCase):
+def _mkresp(data, status=200):
+    r = MagicMock()
+    r.status_code = status
+    r.content = json.dumps(data).encode()
+    return r
+
+
+class TestGeneratedClient(unittest.TestCase):
     def setUp(self):
-        self.api = LibreTranslateAPI()
-
-    def _mock_httpx(self, data, status=200):
-        resp = MagicMock()
-        resp.status_code = status
-        resp.content = json.dumps(data).encode()
-        return resp
+        self.client = Client(base_url="https://libretranslate.com/")
 
     # --- translate ---
 
-    @patch("libretranslatepy.compat._translate")
-    def test_translate(self, mock_fn):
-        mock_fn.return_value.content = json.dumps({"translatedText": "Hola mundo"}).encode()
-        result = self.api.translate("Hello world", "en", "es")
-        self.assertEqual(result, "Hola mundo")
-
-    @patch("libretranslatepy.compat._translate")
-    def test_translate_with_defaults(self, mock_fn):
-        mock_fn.return_value.content = json.dumps({"translatedText": "Hola"}).encode()
-        result = self.api.translate("Hello", "en", "es")
-        self.assertEqual(result, "Hola")
-        _, kwargs = mock_fn.call_args
-        body = kwargs["body"]
-        self.assertEqual(body.q, "Hello")
-        self.assertEqual(body.source, "en")
-
-    @patch("libretranslatepy.compat._translate")
-    def test_translate_with_api_key(self, mock_fn):
-        api = LibreTranslateAPI(api_key="test-key")
-        mock_fn.return_value.content = json.dumps({"translatedText": "Hola"}).encode()
-        result = api.translate("Hello", "en", "es")
-        self.assertEqual(result, "Hola")
+    @patch("httpx.Client.request")
+    def test_translate(self, mock_req):
+        mock_req.return_value = _mkresp({"translatedText": "Hola mundo"})
+        body = PostTranslateBody(q="Hello world", source="en", target="es", format_=PostTranslateBodyFormat.TEXT, alternatives=0)
+        resp = translate(client=self.client, body=body)
+        self.assertEqual(json.loads(resp.content)["translatedText"], "Hola mundo")
 
     # --- detect ---
 
-    @patch("libretranslatepy.compat._detect")
-    def test_detect(self, mock_fn):
+    @patch("httpx.Client.request")
+    def test_detect(self, mock_req):
         data = [{"confidence": 0.95, "language": "en"}]
-        mock_fn.return_value.content = json.dumps(data).encode()
-        result = self.api.detect("Hello world")
-        self.assertEqual(result, data)
+        mock_req.return_value = _mkresp(data)
+        resp = detect(client=self.client, body=PostDetectBody(q="Hello"))
+        self.assertEqual(json.loads(resp.content), data)
 
     # --- languages ---
 
-    @patch("libretranslatepy.compat._languages")
-    def test_languages(self, mock_fn):
+    @patch("httpx.Client.request")
+    def test_languages(self, mock_req):
         data = [{"code": "en", "name": "English"}]
-        mock_fn.return_value.content = json.dumps(data).encode()
-        result = self.api.languages()
-        self.assertEqual(result, data)
+        mock_req.return_value = _mkresp(data)
+        resp = languages(client=self.client)
+        self.assertEqual(json.loads(resp.content), data)
 
     # --- health ---
 
-    @patch("libretranslatepy.compat._health")
-    def test_health(self, mock_fn):
-        mock_fn.return_value.content = json.dumps({"status": "ok"}).encode()
-        result = self.api.health()
-        self.assertEqual(result, {"status": "ok"})
+    @patch("httpx.Client.request")
+    def test_health(self, mock_req):
+        mock_req.return_value = _mkresp({"status": "ok"})
+        resp = health(client=self.client)
+        self.assertEqual(json.loads(resp.content), {"status": "ok"})
 
     # --- frontend_settings ---
 
-    @patch("libretranslatepy.compat._frontend")
-    def test_frontend_settings(self, mock_fn):
-        data = {"keyRequired": False, "charLimit": 500}
-        mock_fn.return_value.content = json.dumps(data).encode()
-        result = self.api.frontend_settings()
-        self.assertEqual(result, data)
+    @patch("httpx.Client.request")
+    def test_frontend_settings(self, mock_req):
+        data = {"keyRequired": False}
+        mock_req.return_value = _mkresp(data)
+        resp = frontend_settings(client=self.client)
+        self.assertEqual(json.loads(resp.content), data)
 
     # --- suggest ---
 
-    @patch("libretranslatepy.compat._suggest")
-    def test_suggest(self, mock_fn):
-        mock_fn.return_value.content = json.dumps({"success": True}).encode()
-        result = self.api.suggest("Hello", "Hola", "en", "es")
-        self.assertEqual(result, {"success": True})
+    @patch("httpx.Client.request")
+    def test_suggest(self, mock_req):
+        mock_req.return_value = _mkresp({"success": True})
+        body = PostSuggestBody(q="Hello", s="Hola", source="en", target="es")
+        resp = suggest(client=self.client, body=body)
+        self.assertEqual(json.loads(resp.content), {"success": True})
 
     # --- translate_file ---
 
-    @patch("libretranslatepy.compat._translate_file")
-    def test_translate_file(self, mock_fn):
+    @patch("httpx.Client.request")
+    def test_translate_file(self, mock_req):
         data = {"translatedFileUrl": "https://example.com/translated.txt"}
-        mock_fn.return_value.content = json.dumps(data).encode()
-        result = self.api.translate_file(b"Hello world", "en", "es")
-        self.assertIn("translatedFileUrl", result)
+        mock_req.return_value = _mkresp(data)
+        body = PostTranslateFileBody(
+            file=File(payload=BytesIO(b"Hello world"), file_name="doc.txt", mime_type="text/plain"),
+            source="en",
+            target="es",
+        )
+        resp = translate_file(client=self.client, body=body)
+        self.assertIn("translatedFileUrl", json.loads(resp.content))
 
-    # --- custom URL ---
+    # --- verifies version attribute ---
 
-    def test_custom_url_ensures_slash(self):
-        api = LibreTranslateAPI("https://example.com")
-        self.assertEqual(api.url, "https://example.com/")
+    def test_version_exists(self):
+        from libretranslatepy import __version__
+        self.assertIsInstance(__version__, str)
 
-        api2 = LibreTranslateAPI("https://example.com/")
-        self.assertEqual(api2.url, "https://example.com/")
+    # --- verifies Client can be created ---
 
-    # --- all methods defined ---
+    def test_client_creation(self):
+        c = Client(base_url="https://example.com/")
+        self.assertEqual(c._base_url, "https://example.com/")
 
-    def test_all_methods_defined(self):
-        methods = ["translate", "detect", "languages", "health", "frontend_settings", "suggest", "translate_file"]
-        for m in methods:
-            self.assertTrue(hasattr(self.api, m), f"Missing method: {m}")
+    def test_client_creation_with_trailing_slash(self):
+        c = Client(base_url="https://example.com")
+        self.assertEqual(c._base_url, "https://example.com")
 
 
 if __name__ == "__main__":
